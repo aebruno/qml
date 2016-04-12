@@ -4,6 +4,7 @@
 #include <QtQml>
 #include <QDebug>
 #include <QQuickImageProvider>
+#include <QStandardPaths>
 
 #include <sailfishapp.h>
 
@@ -242,6 +243,16 @@ void sailfishSetApplicationName(const char *name, int nameLen)
     QByteArray qname(name, nameLen);
     QString qsname = QString::fromUtf8(name);
     app->setApplicationName(qsname);
+}
+
+const char* sailfishGetConfigLocation()
+{
+    return QStandardPaths::writableLocation(QStandardPaths::ConfigLocation).toUtf8().constData();
+}
+
+const char* sailfishGetDataLocation()
+{
+    return QStandardPaths::writableLocation(QStandardPaths::DataLocation).toUtf8().constData();
 }
 
 void componentLoadURL(QQmlComponent_ *component, const char *url, int urlLen)

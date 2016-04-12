@@ -169,6 +169,26 @@ func (e *Engine) SailfishSetSource(path string) (Object, error) {
 	return &Common{engine: e}, nil
 }
 
+// Return the config file location of the Sailfish application.
+func (e *Engine) SailfishGetConfigLocation() (string) {
+    path := ""
+	RunMain(func() {
+		p := C.sailfishGetConfigLocation()
+        path = C.GoString(p)
+	})
+	return path
+}
+
+// Return the data location of the Sailfish application.
+func (e *Engine) SailfishGetDataLocation() (string) {
+    path := ""
+	RunMain(func() {
+		p := C.sailfishGetDataLocation()
+        path = C.GoString(p)
+	})
+	return path
+}
+
 // LoadFile loads a component from the provided QML file.
 // Resources referenced by the QML content will be resolved relative to its path.
 //

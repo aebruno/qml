@@ -157,6 +157,8 @@ void sailfishSetSource(const char *url, int urlLen);
 void sailfishSetApplicationVersion(const char *version, int versionLen);
 void sailfishSetApplicationName(const char *name, int nameLen);
 void sailfishSetOrganizationName(const char *org, int orgLen);
+const char* sailfishGetConfigLocation();
+const char* sailfishGetDataLocation();
 void componentSetData(QQmlComponent_ *component, const char *data, int dataLen, const char *url, int urlLen);
 char *componentErrorString(QQmlComponent_ *component);
 QObject_ *componentCreate(QQmlComponent_ *component, QQmlContext_ *context);
