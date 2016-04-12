@@ -1,9 +1,9 @@
 package qml
 
-// #cgo CPPFLAGS: -I./cpp
-// #cgo CXXFLAGS: -std=c++0x -pedantic-errors -Wall -fno-strict-aliasing
-// #cgo LDFLAGS: -lstdc++
-// #cgo pkg-config: Qt5Core Qt5Widgets Qt5Quick
+// #cgo CPPFLAGS: -I./cpp -I/usr/include/sailfishapp
+// #cgo CXXFLAGS: -std=c++0x -Wall -fno-strict-aliasing
+// #cgo LDFLAGS: -lstdc++ -L/usr/lib/ -lsailfishapp -lmdeclarativecache5
+// #cgo pkg-config: Qt5Core Qt5Quick
 //
 // #include <stdlib.h>
 //
@@ -23,12 +23,12 @@ import (
 )
 
 var (
-	guiFunc      = make(chan func())
-	guiDone      = make(chan struct{})
-	guiLock      = 0
-	guiMainRef   uintptr
-	guiPaintRef  uintptr
-	guiIdleRun   int32
+	guiFunc     = make(chan func())
+	guiDone     = make(chan struct{})
+	guiLock     = 0
+	guiMainRef  uintptr
+	guiPaintRef uintptr
+	guiIdleRun  int32
 
 	initialized int32
 )
@@ -36,6 +36,46 @@ var (
 func init() {
 	runtime.LockOSThread()
 	guiMainRef = cdata.Ref()
+}
+
+// foldRefs holds all fold values that are created. Since Go Pointer
+// are not allowed to be held by cgo. We need a lookup table to
+// interface the two space.
+var foldRefs = make(map[uintptr]*valueFold)
+
+// Special Run() function to launch Jolla SailfishOS applications.
+// Run runs the main QML event loop, runs f, and then terminates the
+// event loop once f returns.
+//
+// Most functions from the qml package block until Run is called.
+//
+// The Run function must necessarily be called from the same goroutine as
+// the main function or the application may fail when running on Mac OS.
+func SailfishRun(name, organization, version string, f func() error) error {
+	if cdata.Ref() != guiMainRef {
+		panic("Run must be called on the initial goroutine so apps are portable to Mac OS")
+	}
+	if !atomic.CompareAndSwapInt32(&initialized, 0, 1) {
+		panic("qml.Run called more than once")
+	}
+	C.sailfishnewGuiApplication()
+
+	cname, cnamelen := unsafeStringData(name)
+	C.sailfishSetApplicationName(cname, cnamelen)
+	corg, corglen := unsafeStringData(organization)
+	C.sailfishSetOrganizationName(corg, corglen)
+	cversion, cversionlen := unsafeStringData(version)
+	C.sailfishSetApplicationVersion(cversion, cversionlen)
+
+	C.idleTimerInit((*C.int32_t)(&guiIdleRun))
+	done := make(chan error, 1)
+	go func() {
+		RunMain(func() {}) // Block until the event loop is running.
+		done <- f()
+		C.sailfishapplicationExit()
+	}()
+	C.sailfishapplicationExec()
+	return <-done
 }
 
 // Run runs the main QML event loop, runs f, and then terminates the
@@ -114,6 +154,14 @@ func Unlock() {
 			panic("qml.Unlock called without lock being held")
 		}
 		guiLock--
+	})
+}
+
+// Flush synchronously flushes all pending QML activities for Sailfish application
+func SailfishFlush() {
+	// TODO Better testing for this.
+	RunMain(func() {
+		C.sailfishapplicationFlushAll()
 	})
 }
 
@@ -210,6 +258,16 @@ const (
 	jsOwner
 )
 
+func storeFold(fold *valueFold) C.GoRef {
+	foldRef := uintptr(unsafe.Pointer(fold))
+	foldRefs[foldRef] = fold
+	return C.GoRef(foldRef)
+}
+
+func restoreFold(ref uintptr) *valueFold {
+	return foldRefs[ref]
+}
+
 // wrapGoValue creates a new GoValue object in C++ land wrapping
 // the Go value contained in the given interface.
 //
@@ -251,7 +309,7 @@ func wrapGoValue(engine *Engine, gvalue interface{}, owner valueOwner) (cvalue u
 		gvalue: gvalue,
 		owner:  owner,
 	}
-	fold.cvalue = C.newGoValue(unsafe.Pointer(fold), typeInfo(gvalue), parent)
+	fold.cvalue = C.newGoValue(storeFold(fold), typeInfo(gvalue), parent)
 	if prev != nil {
 		// Put new fold first so the single cppOwner, if any, is always the first entry.
 		fold.next = prev
@@ -289,7 +347,7 @@ func addrOf(gvalue interface{}) uintptr {
 var typeNew = make(map[*valueFold]bool)
 
 //export hookGoValueTypeNew
-func hookGoValueTypeNew(cvalue unsafe.Pointer, specp unsafe.Pointer) (foldp unsafe.Pointer) {
+func hookGoValueTypeNew(cvalue unsafe.Pointer, specp unsafe.Pointer) (foldr C.GoRef) {
 	// Initialization is postponed until the engine is available, so that
 	// we can hand Init the qml.Object that represents the object.
 	init := reflect.ValueOf((*TypeSpec)(specp).Init)
@@ -299,15 +357,17 @@ func hookGoValueTypeNew(cvalue unsafe.Pointer, specp unsafe.Pointer) (foldp unsa
 		cvalue: cvalue,
 		owner:  jsOwner,
 	}
+
 	typeNew[fold] = true
 	//fmt.Printf("[DEBUG] value alive (type-created): cvalue=%x gvalue=%x/%#v\n", fold.cvalue, addrOf(fold.gvalue), fold.gvalue)
 	stats.valuesAlive(+1)
-	return unsafe.Pointer(fold)
+	return storeFold(fold)
 }
 
 //export hookGoValueDestroyed
-func hookGoValueDestroyed(enginep unsafe.Pointer, foldp unsafe.Pointer) {
-	fold := (*valueFold)(foldp)
+func hookGoValueDestroyed(enginep unsafe.Pointer, foldr uintptr) {
+	fold := restoreFold(foldr)
+
 	engine := fold.engine
 	if engine == nil {
 		before := len(typeNew)
@@ -360,8 +420,8 @@ func deref(value reflect.Value) reflect.Value {
 }
 
 //export hookGoValueReadField
-func hookGoValueReadField(enginep, foldp unsafe.Pointer, reflectIndex, getIndex, setIndex C.int, resultdv *C.DataValue) {
-	fold := ensureEngine(enginep, foldp)
+func hookGoValueReadField(enginep unsafe.Pointer, foldr uintptr, reflectIndex, getIndex, setIndex C.int, resultdv *C.DataValue) {
+	fold := ensureEngine(enginep, foldr)
 
 	var field reflect.Value
 	if getIndex >= 0 {
@@ -376,7 +436,7 @@ func hookGoValueReadField(enginep, foldp unsafe.Pointer, reflectIndex, getIndex,
 		// TODO Handle getters that return []qml.Object.
 		// TODO Handle other GoValue slices (!= []qml.Object).
 		resultdv.dataType = C.DTListProperty
-		*(*unsafe.Pointer)(unsafe.Pointer(&resultdv.data)) = C.newListProperty(foldp, C.intptr_t(reflectIndex), C.intptr_t(setIndex))
+		*(*unsafe.Pointer)(unsafe.Pointer(&resultdv.data)) = C.newListProperty(C.GoRef(foldr), C.intptr_t(reflectIndex), C.intptr_t(setIndex))
 		return
 	}
 
@@ -406,8 +466,8 @@ func hookGoValueReadField(enginep, foldp unsafe.Pointer, reflectIndex, getIndex,
 }
 
 //export hookGoValueWriteField
-func hookGoValueWriteField(enginep, foldp unsafe.Pointer, reflectIndex, setIndex C.int, assigndv *C.DataValue) {
-	fold := ensureEngine(enginep, foldp)
+func hookGoValueWriteField(enginep unsafe.Pointer, foldr uintptr, reflectIndex, setIndex C.int, assigndv *C.DataValue) {
+	fold := ensureEngine(enginep, foldr)
 	v := reflect.ValueOf(fold.gvalue)
 	ve := v
 	for ve.Type().Kind() == reflect.Ptr {
@@ -483,8 +543,8 @@ var (
 )
 
 //export hookGoValueCallMethod
-func hookGoValueCallMethod(enginep, foldp unsafe.Pointer, reflectIndex C.int, args *C.DataValue) {
-	fold := ensureEngine(enginep, foldp)
+func hookGoValueCallMethod(enginep unsafe.Pointer, foldr uintptr, reflectIndex C.int, args *C.DataValue) {
+	fold := ensureEngine(enginep, foldr)
 	v := reflect.ValueOf(fold.gvalue)
 
 	// TODO Must assert that v is necessarily a pointer here, but we shouldn't have to manipulate
@@ -548,7 +608,7 @@ func printPaintPanic() {
 }
 
 //export hookGoValuePaint
-func hookGoValuePaint(enginep, foldp unsafe.Pointer, reflectIndex C.intptr_t) {
+func hookGoValuePaint(enginep unsafe.Pointer, foldr uintptr, reflectIndex C.intptr_t) {
 	// Besides a convenience this is a workaround for http://golang.org/issue/8588
 	defer printPaintPanic()
 	defer atomic.StoreUintptr(&guiPaintRef, 0)
@@ -557,7 +617,7 @@ func hookGoValuePaint(enginep, foldp unsafe.Pointer, reflectIndex C.intptr_t) {
 	// so no two paintings should be happening at the same time.
 	atomic.StoreUintptr(&guiPaintRef, cdata.Ref())
 
-	fold := ensureEngine(enginep, foldp)
+	fold := ensureEngine(enginep, foldr)
 	if fold.init.IsValid() {
 		return
 	}
@@ -568,8 +628,8 @@ func hookGoValuePaint(enginep, foldp unsafe.Pointer, reflectIndex C.intptr_t) {
 	method.Call([]reflect.Value{reflect.ValueOf(painter)})
 }
 
-func ensureEngine(enginep, foldp unsafe.Pointer) *valueFold {
-	fold := (*valueFold)(foldp)
+func ensureEngine(enginep unsafe.Pointer, foldr uintptr) *valueFold {
+	fold := restoreFold(foldr)
 	if fold.engine != nil {
 		if fold.init.IsValid() {
 			initGoType(fold)
@@ -637,22 +697,22 @@ func listSlice(fold *valueFold, reflectIndex C.intptr_t) *[]Object {
 }
 
 //export hookListPropertyAt
-func hookListPropertyAt(foldp unsafe.Pointer, reflectIndex, setIndex C.intptr_t, index C.int) (objp unsafe.Pointer) {
-	fold := (*valueFold)(foldp)
+func hookListPropertyAt(foldr uintptr, reflectIndex, setIndex C.intptr_t, index C.int) (objp unsafe.Pointer) {
+	fold := restoreFold(foldr)
 	slice := listSlice(fold, reflectIndex)
 	return (*slice)[int(index)].Common().addr
 }
 
 //export hookListPropertyCount
-func hookListPropertyCount(foldp unsafe.Pointer, reflectIndex, setIndex C.intptr_t) C.int {
-	fold := (*valueFold)(foldp)
+func hookListPropertyCount(foldr uintptr, reflectIndex, setIndex C.intptr_t) C.int {
+	fold := restoreFold(foldr)
 	slice := listSlice(fold, reflectIndex)
 	return C.int(len(*slice))
 }
 
 //export hookListPropertyAppend
-func hookListPropertyAppend(foldp unsafe.Pointer, reflectIndex, setIndex C.intptr_t, objp unsafe.Pointer) {
-	fold := (*valueFold)(foldp)
+func hookListPropertyAppend(foldr uintptr, reflectIndex, setIndex C.intptr_t, objp unsafe.Pointer) {
+	fold := restoreFold(foldr)
 	slice := listSlice(fold, reflectIndex)
 	var objdv C.DataValue
 	objdv.dataType = C.DTObject
@@ -666,8 +726,8 @@ func hookListPropertyAppend(foldp unsafe.Pointer, reflectIndex, setIndex C.intpt
 }
 
 //export hookListPropertyClear
-func hookListPropertyClear(foldp unsafe.Pointer, reflectIndex, setIndex C.intptr_t) {
-	fold := (*valueFold)(foldp)
+func hookListPropertyClear(foldr uintptr, reflectIndex, setIndex C.intptr_t) {
+	fold := restoreFold(foldr)
 	slice := listSlice(fold, reflectIndex)
 	newslice := (*slice)[0:0]
 	if setIndex >= 0 {

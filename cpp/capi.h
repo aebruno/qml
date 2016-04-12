@@ -29,6 +29,7 @@ typedef void QMessageLogContext_;
 typedef void QImage_;
 typedef void GoValue_;
 typedef void GoAddr;
+typedef uintptr_t GoRef;
 typedef void GoTypeSpec_;
 
 typedef char error;
@@ -49,6 +50,7 @@ typedef enum {
     DTFloat64 = 17,
     DTFloat32 = 18,
     DTColor   = 19,
+    DTDateTime = 20,
 
     DTGoAddr       = 100,
     DTObject       = 101,
@@ -106,9 +108,13 @@ typedef struct {
 } LogMessage;
 
 void newGuiApplication();
+void sailfishnewGuiApplication();
 void applicationExec();
+void sailfishapplicationExec();
 void applicationExit();
+void sailfishapplicationExit();
 void applicationFlushAll();
+void sailfishapplicationFlushAll();
 
 void idleTimerInit(int32_t *guiIdleRun);
 void idleTimerStart();
@@ -116,7 +122,9 @@ void idleTimerStart();
 void *currentThread();
 void *appThread();
 
+void newTranslator(QString_ *translatorRoot);
 QQmlEngine_ *newEngine(QObject_ *parent);
+QQmlEngine_ *newSailfishEngine();
 QQmlContext_ *engineRootContext(QQmlEngine_ *engine);
 void engineSetOwnershipCPP(QQmlEngine_ *engine, QObject_ *object);
 void engineSetOwnershipJS(QQmlEngine_ *engine, QObject_ *object);
@@ -141,19 +149,26 @@ int objectIsComponent(QObject_ *object);
 int objectIsWindow(QObject_ *object);
 int objectIsView(QObject_ *object);
 error *objectConnect(QObject_ *object, const char *signal, int signalLen, QQmlEngine_ *engine, void *func, int argsLen);
-error *objectGoAddr(QObject_ *object, GoAddr **addr);
+error *objectGoRef(QObject_ *object, GoRef *ref);
 
 QQmlComponent_ *newComponent(QQmlEngine_ *engine, QObject_ *parent);
 void componentLoadURL(QQmlComponent_ *component, const char *url, int urlLen);
+void sailfishSetSource(const char *url, int urlLen);
+void sailfishSetApplicationVersion(const char *version, int versionLen);
+void sailfishSetApplicationName(const char *name, int nameLen);
+void sailfishSetOrganizationName(const char *org, int orgLen);
 void componentSetData(QQmlComponent_ *component, const char *data, int dataLen, const char *url, int urlLen);
 char *componentErrorString(QQmlComponent_ *component);
 QObject_ *componentCreate(QQmlComponent_ *component, QQmlContext_ *context);
 QQuickWindow_ *componentCreateWindow(QQmlComponent_ *component, QQmlContext_ *context);
+QQuickWindow_ *sailfishCreateWindow();
 
 void windowShow(QQuickWindow_ *win);
+void sailfishwindowShow();
 void windowHide(QQuickWindow_ *win);
 uintptr_t windowPlatformId(QQuickWindow_ *win);
 void windowConnectHidden(QQuickWindow_ *win);
+void windowConnectDestroy(QQuickWindow_ *win);
 QObject_ *windowRootObject(QQuickWindow_ *win);
 QImage_ *windowGrabWindow(QQuickWindow_ *win);
 
@@ -166,7 +181,7 @@ const unsigned char *imageConstBits(QImage_ *image);
 QString_ *newString(const char *data, int len);
 void delString(QString_ *s);
 
-GoValue_ *newGoValue(GoAddr *addr, GoTypeInfo *typeInfo, QObject_ *parent);
+GoValue_ *newGoValue(GoRef ref, GoTypeInfo *typeInfo, QObject_ *parent);
 void goValueActivate(GoValue_ *value, GoTypeInfo *typeInfo, int addrOffset);
 
 void packDataValue(QVariant_ *var, DataValue *result);
@@ -174,7 +189,7 @@ void unpackDataValue(DataValue *value, QVariant_ *result);
 
 QVariantList_ *newVariantList(DataValue *list, int len);
 
-QQmlListProperty_ *newListProperty(GoAddr *addr, intptr_t reflectIndex, intptr_t setIndex);
+QQmlListProperty_ *newListProperty(GoRef ref, intptr_t reflectIndex, intptr_t setIndex);
 
 int registerType(char *location, int major, int minor, char *name, GoTypeInfo *typeInfo, GoTypeSpec_ *spec);
 int registerSingleton(char *location, int major, int minor, char *name, GoTypeInfo *typeInfo, GoTypeSpec_ *spec);
@@ -183,21 +198,21 @@ void installLogHandler();
 
 void hookIdleTimer();
 void hookLogHandler(LogMessage *message);
-void hookGoValueReadField(QQmlEngine_ *engine, GoAddr *addr, int memberIndex, int getIndex, int setIndex, DataValue *result);
-void hookGoValueWriteField(QQmlEngine_ *engine, GoAddr *addr, int memberIndex, int setIndex, DataValue *assign);
-void hookGoValueCallMethod(QQmlEngine_ *engine, GoAddr *addr, int memberIndex, DataValue *result);
-void hookGoValueDestroyed(QQmlEngine_ *engine, GoAddr *addr);
-void hookGoValuePaint(QQmlEngine_ *engine, GoAddr *addr, intptr_t reflextIndex);
+void hookGoValueReadField(QQmlEngine_ *engine, GoRef ref, int memberIndex, int getIndex, int setIndex, DataValue *result);
+void hookGoValueWriteField(QQmlEngine_ *engine, GoRef ref, int memberIndex, int setIndex, DataValue *assign);
+void hookGoValueCallMethod(QQmlEngine_ *engine, GoRef ref, int memberIndex, DataValue *result);
+void hookGoValueDestroyed(QQmlEngine_ *engine, GoRef ref);
+void hookGoValuePaint(QQmlEngine_ *engine, GoRef ref, intptr_t reflextIndex);
 QImage_ *hookRequestImage(void *imageFunc, char *id, int idLen, int width, int height);
-GoAddr *hookGoValueTypeNew(GoValue_ *value, GoTypeSpec_ *spec);
+uintptr_t hookGoValueTypeNew(GoValue_ *value, GoTypeSpec_ *spec);
 void hookWindowHidden(QObject_ *addr);
 void hookSignalCall(QQmlEngine_ *engine, void *func, DataValue *params);
 void hookSignalDisconnect(void *func);
 void hookPanic(char *message);
-int hookListPropertyCount(GoAddr *addr, intptr_t reflectIndex, intptr_t setIndex);
-QObject_ *hookListPropertyAt(GoAddr *addr, intptr_t reflectIndex, intptr_t setIndex, int i);
-void hookListPropertyAppend(GoAddr *addr, intptr_t reflectIndex, intptr_t setIndex, QObject_ *obj);
-void hookListPropertyClear(GoAddr *addr, intptr_t reflectIndex, intptr_t setIndex);
+int hookListPropertyCount(GoRef ref, intptr_t reflectIndex, intptr_t setIndex);
+QObject_ *hookListPropertyAt(GoRef ref, intptr_t reflectIndex, intptr_t setIndex, int i);
+void hookListPropertyAppend(GoRef ref, intptr_t reflectIndex, intptr_t setIndex, QObject_ *obj);
+void hookListPropertyClear(GoRef ref, intptr_t reflectIndex, intptr_t setIndex);
 
 void registerResourceData(int version, char *tree, char *name, char *data);
 void unregisterResourceData(int version, char *tree, char *name, char *data);
