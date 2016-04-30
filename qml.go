@@ -9,7 +9,6 @@ import "C"
 import (
 	"errors"
 	"fmt"
-	"gopkg.in/qml.v1/gl/glbase"
 	"image"
 	"image/color"
 	"io"
@@ -20,6 +19,8 @@ import (
 	"strings"
 	"sync"
 	"unsafe"
+
+	"gopkg.in/qml.v1/gl/glbase"
 )
 
 // Engine provides an environment for instantiating QML components.
@@ -170,21 +171,21 @@ func (e *Engine) SailfishSetSource(path string) (Object, error) {
 }
 
 // Return the config file location of the Sailfish application.
-func (e *Engine) SailfishGetConfigLocation() (string) {
-    path := ""
+func (e *Engine) SailfishGetConfigLocation() string {
+	path := ""
 	RunMain(func() {
 		p := C.sailfishGetConfigLocation()
-        path = C.GoString(p)
+		path = C.GoString(p)
 	})
 	return path
 }
 
 // Return the data location of the Sailfish application.
-func (e *Engine) SailfishGetDataLocation() (string) {
-    path := ""
+func (e *Engine) SailfishGetDataLocation() string {
+	path := ""
 	RunMain(func() {
 		p := C.sailfishGetDataLocation()
-        path = C.GoString(p)
+		path = C.GoString(p)
 	})
 	return path
 }

@@ -16,9 +16,11 @@
 #include "govaluetype.h"
 #include "connector.h"
 #include "capi.h"
+#include "filemodel.h"
 
 QGuiApplication *app;
 QQuickView *sfview;
+FileModel *fileModel;
 
 void newTranslator(QString_ *i18nroot)
 {
@@ -130,6 +132,8 @@ void *appThread()
 QQmlEngine_ *newSailfishEngine()
 {
     sfview = SailfishApp::createView();
+    fileModel = new FileModel();
+    sfview->rootContext()->setContextProperty("fileModel", fileModel);
     return sfview->engine();
 }
 
