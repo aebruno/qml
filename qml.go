@@ -9,7 +9,6 @@ import "C"
 import (
 	"errors"
 	"fmt"
-	"gopkg.in/qml.v1/gl/glbase"
 	"image"
 	"image/color"
 	"io"
@@ -20,6 +19,8 @@ import (
 	"strings"
 	"sync"
 	"unsafe"
+
+	"gopkg.in/qml.v1/gl/glbase"
 )
 
 // Engine provides an environment for instantiating QML components.
@@ -32,6 +33,41 @@ type Engine struct {
 }
 
 var engines = make(map[unsafe.Pointer]*Engine)
+
+// NewSailfishEngine returns a new Sailfish QML engine.
+//
+// The Destory method must be called to finalize the engine and
+// release any resources used.
+func SailfishNewEngine() *Engine {
+	engine := &Engine{values: make(map[interface{}]*valueFold)}
+	RunMain(func() {
+		engine.addr = C.newSailfishEngine()
+		engine.engine = engine
+		engine.imageProviders = make(map[string]*func(imageId string, width, height int) image.Image)
+		engines[engine.addr] = engine
+		stats.enginesAlive(+1)
+	})
+	return engine
+}
+
+// Set the Sailfish applications view source to the given QML file from the applications
+// root shared folder.
+func (e *Engine) SailfishSetSource(path string) (Object, error) {
+	cloc, cloclen := unsafeStringData(path)
+	RunMain(func() {
+		C.sailfishSetSource(cloc, cloclen)
+	})
+	return &Common{engine: e}, nil
+}
+
+func (e *Engine) Translator(translatorRoot string) {
+	ctranslatorRoot, ctranslatorLen := unsafeStringData(translatorRoot)
+	RunMain(func() {
+		qtranslatorRoot := C.newString(ctranslatorRoot, ctranslatorLen)
+		defer C.delString(qtranslatorRoot)
+		C.newTranslator(qtranslatorRoot)
+	})
+}
 
 // NewEngine returns a new QML engine.
 //
@@ -75,6 +111,13 @@ func (e *Engine) Destroy() {
 			}
 		})
 	}
+}
+
+// Show exposes the Sailfish application window.
+func (win *Window) SailfishShow() {
+	RunMain(func() {
+		C.sailfishwindowShow()
+	})
 }
 
 // Load loads a new component with the provided location and with the
@@ -368,6 +411,7 @@ type Object interface {
 	Call(method string, params ...interface{}) interface{}
 	Create(ctx *Context) Object
 	CreateWindow(ctx *Context) *Window
+	SailfishCreateWindow() *Window
 	Destroy()
 	On(signal string, function interface{})
 }
@@ -728,6 +772,46 @@ func (obj *Common) Create(ctx *Context) Object {
 		root.addr = C.componentCreate(obj.addr, ctxaddr)
 	})
 	return &root
+}
+
+// Return the config file location of the Sailfish application.
+func (e *Engine) SailfishGetConfigLocation() string {
+	path := ""
+	RunMain(func() {
+		p := C.sailfishGetConfigLocation()
+		path = C.GoString(p)
+	})
+	return path
+}
+
+// Return the data location of the Sailfish application.
+func (e *Engine) SailfishGetDataLocation() string {
+	path := ""
+	RunMain(func() {
+		p := C.sailfishGetDataLocation()
+		path = C.GoString(p)
+	})
+	return path
+}
+
+// Returns the root object after Sailfish view had been created
+func (e *Engine) SailfishGetWindowRoot() *Common {
+	var obj Common
+	obj.engine = e.engine
+	RunMain(func() {
+		obj.addr = C.windowRootObject(C.sailfishCreateWindow())
+	})
+	return &obj
+}
+
+// Returns a window structure for Sailfish application QQuickView
+func (obj *Common) SailfishCreateWindow() *Window {
+	var win Window
+	win.engine = obj.engine
+	RunMain(func() {
+		win.addr = C.sailfishCreateWindow()
+	})
+	return &win
 }
 
 // CreateWindow creates a new instance of the component held by obj,
@@ -1097,9 +1181,9 @@ func LoadResources(r *Resources) {
 	} else if len(r.bdata) > 0 {
 		base = *(*unsafe.Pointer)(unsafe.Pointer(&r.bdata))
 	}
-	tree := (*C.char)(unsafe.Pointer(uintptr(base)+uintptr(r.treeOffset)))
-	name := (*C.char)(unsafe.Pointer(uintptr(base)+uintptr(r.nameOffset)))
-	data := (*C.char)(unsafe.Pointer(uintptr(base)+uintptr(r.dataOffset)))
+	tree := (*C.char)(unsafe.Pointer(uintptr(base) + uintptr(r.treeOffset)))
+	name := (*C.char)(unsafe.Pointer(uintptr(base) + uintptr(r.nameOffset)))
+	data := (*C.char)(unsafe.Pointer(uintptr(base) + uintptr(r.dataOffset)))
 	C.registerResourceData(C.int(r.version), tree, name, data)
 }
 
@@ -1111,8 +1195,8 @@ func UnloadResources(r *Resources) {
 	} else if len(r.bdata) > 0 {
 		base = *(*unsafe.Pointer)(unsafe.Pointer(&r.bdata))
 	}
-	tree := (*C.char)(unsafe.Pointer(uintptr(base)+uintptr(r.treeOffset)))
-	name := (*C.char)(unsafe.Pointer(uintptr(base)+uintptr(r.nameOffset)))
-	data := (*C.char)(unsafe.Pointer(uintptr(base)+uintptr(r.dataOffset)))
+	tree := (*C.char)(unsafe.Pointer(uintptr(base) + uintptr(r.treeOffset)))
+	name := (*C.char)(unsafe.Pointer(uintptr(base) + uintptr(r.nameOffset)))
+	data := (*C.char)(unsafe.Pointer(uintptr(base) + uintptr(r.dataOffset)))
 	C.unregisterResourceData(C.int(r.version), tree, name, data)
 }

@@ -1,9 +1,12 @@
-#include <QApplication>
+#include <QGuiApplication>
 #include <QQuickView>
 #include <QQuickItem>
 #include <QtQml>
 #include <QDebug>
 #include <QQuickImageProvider>
+#include <QStandardPaths>
+#include <sailfishapp.h>
+#include <QtCore/QTranslator>
 
 #include <string.h>
 
@@ -11,6 +14,23 @@
 #include "govaluetype.h"
 #include "connector.h"
 #include "capi.h"
+#include "filemodel.h"
+
+QGuiApplication *app;
+QQuickView *sfview;
+FileModel *fileModel;
+
+void newTranslator(QString_ *i18nroot)
+{
+    QString *root = reinterpret_cast<QString *>(i18nroot);
+    QTranslator *translator = new QTranslator;
+    if (translator->load(QLatin1String("qml_") + QLocale::system().name(), *root)) {
+        QCoreApplication::installTranslator(translator);
+        qDebug() << "Found i18n for " + QLocale::system().name();
+    } else {
+        qDebug() << "No translations found for language " + QLatin1String("qml_") + QLocale::system().name();
+    }
+}
 
 static char *local_strdup(const char *str)
 {
@@ -43,12 +63,95 @@ void panicf(const char *format, ...)
     hookPanic(local_strdup(ba.constData()));
 }
 
+void sailfishnewGuiApplication()
+{
+    static char empty[1] = {0};
+    static char *argv[] = {empty, 0};
+    static int argc = 1;
+
+    app = SailfishApp::application(argc, argv);
+
+    // The event loop should never die.
+    app->setQuitOnLastWindowClosed(false);
+}
+
+void sailfishapplicationExec()
+{
+    app->exec();
+}
+
+void sailfishapplicationExit()
+{
+    app->exit(0);
+}
+
+void sailfishapplicationFlushAll()
+{
+    app->processEvents();
+}
+
+QQmlEngine_ *newSailfishEngine()
+{
+    sfview = SailfishApp::createView();
+    fileModel = new FileModel();
+    sfview->rootContext()->setContextProperty("fileModel", fileModel);
+    return sfview->engine();
+}
+
+QQuickWindow_ *sailfishCreateWindow()
+{
+    return sfview;
+}
+
+void sailfishwindowShow()
+{
+    sfview->show();
+}
+
+const char* sailfishGetConfigLocation()
+{
+    return QStandardPaths::writableLocation(QStandardPaths::ConfigLocation).toUtf8().constData();
+}
+
+const char* sailfishGetDataLocation()
+{
+    return QStandardPaths::writableLocation(QStandardPaths::DataLocation).toUtf8().constData();
+}
+
+void sailfishSetSource(const char *url, int urlLen)
+{
+    QByteArray qurl(url, urlLen);
+    QString qsurl = QString::fromUtf8(qurl);
+    sfview->setSource(SailfishApp::pathTo(qsurl));
+}
+
+void sailfishSetApplicationVersion(const char *version, int versionLen)
+{
+    QByteArray qversion(version, versionLen);
+    QString qsversion = QString::fromUtf8(qversion);
+    app->setApplicationVersion(qsversion);
+}
+
+void sailfishSetOrganizationName(const char *org, int orgLen)
+{
+    QByteArray qorg(org, orgLen);
+    QString qsorg = QString::fromUtf8(qorg);
+    app->setOrganizationName(qsorg);
+}
+
+void sailfishSetApplicationName(const char *name, int nameLen)
+{
+    QByteArray qname(name, nameLen);
+    QString qsname = QString::fromUtf8(name);
+    app->setApplicationName(qsname);
+}
+
 void newGuiApplication()
 {
     static char empty[1] = {0};
     static char *argv[] = {empty, 0};
     static int argc = 1;
-    new QApplication(argc, argv);
+    new QGuiApplication(argc, argv);
 
     // The event loop should never die.
     qApp->setQuitOnLastWindowClosed(false);
@@ -234,6 +337,30 @@ void windowShow(QQuickWindow_ *win)
     reinterpret_cast<DoShowWindow *>(win)->show();
 }
 
+void destroyMe(QQuickCloseEvent *close)
+{
+    qDebug() << "Ok, called.";
+}
+
+
+class CloseEventFilter : public QObject
+{
+     Q_OBJECT
+public:
+     CloseEventFilter(QObject *parent) : QObject(parent) {}
+
+protected: 
+     bool eventFilter(QObject *obj, QEvent *event)
+     {
+          if (event->type() == QEvent::Close)
+          {
+            hookWindowHidden(obj);
+          }
+
+          return QObject::eventFilter(obj, event);
+     }
+};
+
 void windowHide(QQuickWindow_ *win)
 {
     reinterpret_cast<QQuickWindow *>(win)->hide();
@@ -247,9 +374,13 @@ uintptr_t windowPlatformId(QQuickWindow_ *win)
 void windowConnectHidden(QQuickWindow_ *win)
 {
     QQuickWindow *qwin = reinterpret_cast<QQuickWindow *>(win);
+    // Test
+    CloseEventFilter *closeFilter = new CloseEventFilter(qwin);
+    qwin->installEventFilter(closeFilter);
+    // Test End
     QObject::connect(qwin, &QWindow::visibleChanged, [=](bool visible){
         if (!visible) {
-            hookWindowHidden(win);
+//            hookWindowHidden(win);
         }
     });
 }
@@ -403,7 +534,7 @@ error *objectSetProperty(QObject_ *object, const char *name, DataValue *value)
     } else {
         int varType = var.userType();
         QVariant saved = var;
-        if (propType != varType && !var.convert(propType)) {
+        if (propType != varType && !var.convert(propType) && propType != QMetaType::QUrl) {
             if (varType == QMetaType::QObjectStar) {
                 return errorf("cannot set property \"%s\" with type %s to value of %s*",
                         name, QMetaType::typeName(propType), saved.value<QObject*>()->metaObject()->className());
@@ -452,10 +583,10 @@ error *objectInvoke(QObject_ *object, const char *method, int methodLen, DataVal
 
                 bool ok;
                 if (metaMethod.returnType() == QMetaType::Void) {
-                    ok = metaMethod.invoke(qobject, Qt::DirectConnection, 
+                    ok = QMetaObject::invokeMethod(qobject, metaMethod.name(), Qt::DirectConnection, 
                         arg[0], arg[1], arg[2], arg[3], arg[4], arg[5], arg[6], arg[7], arg[8], arg[9]);
                 } else {
-                    ok = metaMethod.invoke(qobject, Qt::DirectConnection, Q_RETURN_ARG(QVariant, result),
+                    ok = QMetaObject::invokeMethod(qobject, metaMethod.name(), Qt::DirectConnection, Q_RETURN_ARG(QVariant, result),
                         arg[0], arg[1], arg[2], arg[3], arg[4], arg[5], arg[6], arg[7], arg[8], arg[9]);
                 }
                 if (!ok) {
@@ -629,6 +760,9 @@ void unpackDataValue(DataValue *value, QVariant_ *var)
     case DTColor:
         *qvar = QColor::fromRgba(*(QRgb*)(value->data));
         break;
+    case DTDateTime:
+        *qvar = QDateTime::fromTime_t(*(quint32*)(value->data));
+        break;
     case DTVariantList:
         *qvar = **(QVariantList**)(value->data);
         delete *(QVariantList**)(value->data);
@@ -708,6 +842,20 @@ void packDataValue(QVariant_ *var, DataValue *value)
     case QMetaType::QColor:
         value->dataType = DTColor;
         *(unsigned int*)(value->data) = qvar->value<QColor>().rgba();
+        break;
+    case QMetaType::QDateTime:
+        value->dataType = DTDateTime;
+        *(quint32*)(value->data) = qvar->toUInt();
+        break;
+    case QMetaType::User:
+        {
+            if (qvar->userType() == 1034) {
+                auto var = qvar->value<QJSValue>().toVariant();
+                packDataValue(&var, value);
+            } else {
+                qDebug() << "user-type = " << qvar->userType() << " name = " << QVariant::typeToName(qvar->userType());
+            }
+        }
         break;
     case QMetaType::QVariantList:
         {

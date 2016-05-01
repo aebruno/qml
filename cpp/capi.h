@@ -50,6 +50,7 @@ typedef enum {
     DTFloat64 = 17,
     DTFloat32 = 18,
     DTColor   = 19,
+    DTDateTime = 20,
 
     DTGoAddr       = 100,
     DTObject       = 101,
@@ -110,6 +111,22 @@ void newGuiApplication();
 void applicationExec();
 void applicationExit();
 void applicationFlushAll();
+
+void sailfishnewGuiApplication();
+void sailfishapplicationExec();
+void sailfishapplicationExit();
+void sailfishapplicationFlushAll();
+void newTranslator(QString_ *translatorRoot);
+QQmlEngine_ *newSailfishEngine();
+void sailfishSetSource(const char *url, int urlLen);
+void sailfishSetApplicationVersion(const char *version, int versionLen);
+void sailfishSetApplicationName(const char *name, int nameLen);
+void sailfishSetOrganizationName(const char *org, int orgLen);
+const char* sailfishGetConfigLocation();
+const char* sailfishGetDataLocation();
+QQuickWindow_ *sailfishCreateWindow();
+void sailfishwindowShow();
+void windowConnectDestroy(QQuickWindow_ *win);
 
 void idleTimerInit(int32_t *guiIdleRun);
 void idleTimerStart();

@@ -1,9 +1,9 @@
 package qml
 
-// #cgo CPPFLAGS: -I./cpp
-// #cgo CXXFLAGS: -std=c++0x -pedantic-errors -Wall -fno-strict-aliasing
-// #cgo LDFLAGS: -lstdc++
-// #cgo pkg-config: Qt5Core Qt5Widgets Qt5Quick
+// #cgo CPPFLAGS: -I./cpp -I/usr/include/sailfishapp
+// #cgo CXXFLAGS: -std=c++0x -Wall -fno-strict-aliasing
+// #cgo LDFLAGS: -lstdc++ -L/usr/lib/ -lsailfishapp -lmdeclarativecache5
+// #cgo pkg-config: Qt5Core Qt5Quick
 //
 // #include <stdlib.h>
 //
@@ -23,12 +23,12 @@ import (
 )
 
 var (
-	guiFunc      = make(chan func())
-	guiDone      = make(chan struct{})
-	guiLock      = 0
-	guiMainRef   uintptr
-	guiPaintRef  uintptr
-	guiIdleRun   int32
+	guiFunc     = make(chan func())
+	guiDone     = make(chan struct{})
+	guiLock     = 0
+	guiMainRef  uintptr
+	guiPaintRef uintptr
+	guiIdleRun  int32
 
 	initialized int32
 )
@@ -36,6 +36,41 @@ var (
 func init() {
 	runtime.LockOSThread()
 	guiMainRef = cdata.Ref()
+}
+
+// Special Run() function to launch Jolla SailfishOS applications.
+// Run runs the main QML event loop, runs f, and then terminates the
+// event loop once f returns.
+//
+// Most functions from the qml package block until Run is called.
+//
+// The Run function must necessarily be called from the same goroutine as
+// the main function or the application may fail when running on Mac OS.
+func SailfishRun(name, organization, version string, f func() error) error {
+	if cdata.Ref() != guiMainRef {
+		panic("Run must be called on the initial goroutine so apps are portable to Mac OS")
+	}
+	if !atomic.CompareAndSwapInt32(&initialized, 0, 1) {
+		panic("qml.Run called more than once")
+	}
+	C.sailfishnewGuiApplication()
+
+	cname, cnamelen := unsafeStringData(name)
+	C.sailfishSetApplicationName(cname, cnamelen)
+	corg, corglen := unsafeStringData(organization)
+	C.sailfishSetOrganizationName(corg, corglen)
+	cversion, cversionlen := unsafeStringData(version)
+	C.sailfishSetApplicationVersion(cversion, cversionlen)
+
+	C.idleTimerInit((*C.int32_t)(&guiIdleRun))
+	done := make(chan error, 1)
+	go func() {
+		RunMain(func() {}) // Block until the event loop is running.
+		done <- f()
+		C.sailfishapplicationExit()
+	}()
+	C.sailfishapplicationExec()
+	return <-done
 }
 
 // Run runs the main QML event loop, runs f, and then terminates the
@@ -114,6 +149,14 @@ func Unlock() {
 			panic("qml.Unlock called without lock being held")
 		}
 		guiLock--
+	})
+}
+
+// Flush synchronously flushes all pending QML activities for Sailfish application
+func SailfishFlush() {
+	// TODO Better testing for this.
+	RunMain(func() {
+		C.sailfishapplicationFlushAll()
 	})
 }
 
