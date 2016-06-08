@@ -774,6 +774,14 @@ func (obj *Common) Create(ctx *Context) Object {
 	return &root
 }
 
+// Copy string to Sailfish clipboard
+func (e *Engine) SailfishCopyToClipboard(text string) {
+	RunMain(func() {
+		ctext, clen := unsafeStringData(text)
+		C.sailfishCopyToClipboard(ctext, clen)
+	})
+}
+
 // Return the config file location of the Sailfish application.
 func (e *Engine) SailfishGetConfigLocation() string {
 	path := ""

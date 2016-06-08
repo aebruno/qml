@@ -7,6 +7,7 @@
 #include <QStandardPaths>
 #include <sailfishapp.h>
 #include <QtCore/QTranslator>
+#include <QClipboard>
 
 #include <string.h>
 
@@ -116,6 +117,18 @@ const char* sailfishGetConfigLocation()
 const char* sailfishGetDataLocation()
 {
     return QStandardPaths::writableLocation(QStandardPaths::DataLocation).toUtf8().constData();
+}
+
+void sailfishCopyToClipboard(const char *text, int len)
+{
+    QByteArray qtext(text, len);
+    QString qstext = QString::fromUtf8(qtext);
+
+    if(!qstext.isEmpty()) {
+        QClipboard *cb = QGuiApplication::clipboard();
+        cb->clear();
+        cb->setText(qstext);
+    }
 }
 
 void sailfishSetSource(const char *url, int urlLen)

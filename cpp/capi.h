@@ -122,6 +122,7 @@ void sailfishSetSource(const char *url, int urlLen);
 void sailfishSetApplicationVersion(const char *version, int versionLen);
 void sailfishSetApplicationName(const char *name, int nameLen);
 void sailfishSetOrganizationName(const char *org, int orgLen);
+void sailfishCopyToClipboard(const char *text, int len);
 const char* sailfishGetConfigLocation();
 const char* sailfishGetDataLocation();
 QQuickWindow_ *sailfishCreateWindow();
